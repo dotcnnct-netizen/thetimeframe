@@ -24,6 +24,10 @@ function apply(s, ev) {
   }
   else if (t === "m15") s.m15 = d;
   else if (t === "m5_exec") s.m5 = d;
+  else if (t === "newday") {
+    s.stats = { trades: 0, executed: 0, failed: 0 };
+    s.gate = {}; s.h1 = {}; s.m15 = {}; s.m5 = {}; s.last_trade = {};
+  }
   else if (t === "trade") { s.last_trade = d; s.stats.trades++; }
   else if (t === "order_ok") s.stats.executed++;
   else if (t === "order_fail") s.stats.failed++;

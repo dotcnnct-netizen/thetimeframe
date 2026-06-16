@@ -3,7 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The Timeframe Engine — Live Terminal</title>
+<title>The Timeframe Engine — Live Trading Signal Terminal</title>
+<meta name="description" content="The Timeframe Engine — a live multi-timeframe (D1/H4/H1/M15/M5) trading signal terminal for XAUUSD, showing real-time bias, gate cascade, setups and execution signals.">
+<meta name="robots" content="index, follow">
+<meta name="keywords" content="timeframe engine, trading signals, XAUUSD, gold, live trading dashboard, multi timeframe">
+<link rel="canonical" href="https://thetimeframeengine.in/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="The Timeframe Engine — Live Trading Signal Terminal">
+<meta property="og:description" content="Live multi-timeframe trading signal terminal: real-time bias, gate cascade, setups and execution signals.">
+<meta property="og:url" content="https://thetimeframeengine.in/">
+<meta name="twitter:card" content="summary_large_image">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -36,6 +45,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--disp);overflow-x:hi
 .dot.on{background:var(--mint);animation:beat 1.7s infinite}
 @keyframes beat{0%{box-shadow:0 0 0 0 rgba(0,255,163,.55)}70%{box-shadow:0 0 0 10px rgba(0,255,163,0)}100%{box-shadow:0 0 0 0 transparent}}
 .clk{font-family:var(--mono);font-size:13px}.clk span{color:var(--muted);font-size:10px;letter-spacing:1px}
+.online{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;color:var(--muted);border:1px solid var(--edge);padding:5px 10px;border-radius:8px;background:rgba(4,8,14,.5)}.online b{color:var(--mint);font-weight:700}.odot{width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 8px var(--mint);animation:beat 2.4s infinite}
 
 /* ---- ticker tape ---- */
 .tape{margin-top:12px;border:1px solid var(--edge);border-radius:10px;background:rgba(4,8,14,.6);
@@ -159,6 +169,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--disp);overflow-x:hi
   <div class="top">
     <div class="brand"><h1>THE <b>TIMEFRAME</b> ENGINE</h1><span class="tagchip">LIVE TERMINAL · v2</span></div>
     <div class="live"><span id="dot" class="dot"></span><span id="conn">connecting…</span></div>
+    <div class="online"><span class="odot"></span><b id="online">—</b> watching</div>
     <div class="clk"><span>ENGINE</span> <b id="clk">--:--:--</b> UTC</div>
   </div>
 
@@ -260,12 +271,12 @@ function stageState(s){
     D1(){const l=b.label;if(!l)return{cls:'',val:'—',tag:'idle',fill:0};
       const dir=l.includes('SELL')||l.includes('BUY');
       const conv=b.bull_pct!==undefined?(l.includes('SELL')?100-b.bull_pct:b.bull_pct):null;
-      return{cls:dir?'go':'wait',val:l.replace('_',' '),tag:conv!==null?conv+'% conv':'set',fill:conv?conv/100:.6};},
+      return{cls:dir?'go':'wait',val:l.replace(/_/g,' '),tag:conv!==null?conv+'% conv':'set',fill:conv?conv/100:.6};},
     H4(){if(g.score===undefined)return{cls:'',val:'—',tag:'idle',fill:0};
       return{cls:g.allow?'go':'block',val:'gate '+g.score+'/'+g.max,tag:g.allow?'ALLOW':'BLOCK',fill:g.score/(g.max||8)};},
     H1(){if(!h.state&&h.score===undefined)return{cls:'',val:'no setup',tag:'idle',fill:0};
       const sc=h.score;return{cls:(h.state&&h.state.indexOf('ENGAGE')>=0)?'go':'wait',
-        val:(h.state?h.state.replace('_',' '):'engage')+(sc!==undefined?'  '+sc:''),tag:h.entry||'setup',fill:sc?Math.min(sc/10,1):.5};},
+        val:(h.state?h.state.replace(/_/g,' '):'engage')+(sc!==undefined?'  '+sc:''),tag:h.entry||'setup',fill:sc?Math.min(sc/10,1):.5};},
     M15(){if(m.score===undefined)return{cls:'',val:'—',tag:'idle',fill:0};
       return{cls:m.ok?'go':'wait',val:'confirm '+m.score+'/'+m.max,tag:m.ok?'OK':'wait',fill:m.score/(m.max||8)};},
     M5(){if(!m5.entry&&!tr.price)return{cls:'',val:'standby',tag:'idle',fill:0};
@@ -292,7 +303,7 @@ function renderChain(){const ss=stageState(st);let act=-1;
   STAGES.forEach((s,i)=>$('s-'+s.key).classList.toggle('active',i===act));}
 
 function renderHero(){const b=st.bias||{};const big=$('biasBig');
-  const lab=b.label?b.label.replace('_',' '):'—';const kind=b.label?(b.label.includes('SELL')?'SELL':b.label.includes('BUY')?'BUY':'NEUTRAL'):'NEUTRAL';
+  const lab=b.label?b.label.replace(/_/g,' '):'—';const kind=b.label?(b.label.includes('SELL')?'SELL':b.label.includes('BUY')?'BUY':'NEUTRAL'):'NEUTRAL';
   big.textContent=lab;big.className='big '+kind;
   $('gSess').textContent=st.session||'—';$('gBear').textContent=fmt(b.bear);$('gBull').textContent=fmt(b.bull);
   let conv=b.bull_pct!==undefined?(b.label&&b.label.includes('SELL')?100-b.bull_pct:b.bull_pct):0;
@@ -347,7 +358,16 @@ async function poll(){
     renderAll();
   }catch(e){$('conn').textContent='reconnecting…';}
 }
-buildChain();renderAll();poll();setInterval(poll,1200);
+/* ===== presence: how many tabs are watching now ===== */
+const CID=Math.random().toString(36).slice(2);
+async function ping(){try{
+  const r=await fetch('/api/presence',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:CID})});
+  const j=await r.json(); if(j&&j.online!=null) $('online').textContent=j.online;
+}catch(e){}}
+
+buildChain();renderAll();poll();ping();
+setInterval(poll,2000);
+setInterval(ping,8000);
 </script>
 </body>
 </html>

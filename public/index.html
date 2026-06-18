@@ -359,7 +359,13 @@ async function poll(){
   try{const r=await fetch('/api/state?cid='+CID,{cache:'no-store'});st=await r.json();renderAll();}
   catch(e){$('conn').textContent='reconnecting…';}
 }
-buildPipe();poll();setInterval(poll,10000);   // 10s — data changes at most every 15 min
+// Adaptive polling: slow when idle (saves Netlify credits), faster during a live trade.
+async function loop(){
+  await poll();
+  const fast = st && st.open_trade;            // 15s while a trade is open, 45s when just scanning
+  setTimeout(loop, fast ? 15000 : 45000);
+}
+buildPipe(); loop();
 </script>
 </body>
 </html>

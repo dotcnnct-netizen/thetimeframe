@@ -16,6 +16,7 @@ function apply(s, ev) {
   if (ev.session) s.session = ev.session;
 
   if (t === "bias" || t === "bias_detail") s.bias = { ...s.bias, ...d };
+  else if (t === "bias_head") s.bias = { ...s.bias, label: d.label };
   else if (t === "gate") s.gate = d;
   else if (["h1_engage", "h1_latch", "h1_levels", "h1_risk"].includes(t)) {
     const c = { ...s.h1 };

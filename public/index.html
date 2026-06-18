@@ -177,7 +177,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--disp);overflow-x:hi
 
   <div class="hero">
     <div class="convo">
-      <div class="eyebrow">DAILY BIAS</div>
+      <div class="eyebrow" id="biasEyebrow">DAILY BIAS</div>
       <div id="biasBig" class="big NEUTRAL">—</div>
       <div class="conviction"><i id="convBar"></i></div>
     </div>
@@ -305,6 +305,7 @@ function renderChain(){const ss=stageState(st);let act=-1;
 function renderHero(){const b=st.bias||{};const big=$('biasBig');
   const lab=b.label?b.label.replace(/_/g,' '):'—';const kind=b.label?(b.label.includes('SELL')?'SELL':b.label.includes('BUY')?'BUY':'NEUTRAL'):'NEUTRAL';
   big.textContent=lab;big.className='big '+kind;
+  $('biasEyebrow').textContent='DAILY BIAS'+(b.date?' · '+b.date:'');
   $('gSess').textContent=st.session||'—';$('gBear').textContent=fmt(b.bear);$('gBull').textContent=fmt(b.bull);
   let conv=b.bull_pct!==undefined?(b.label&&b.label.includes('SELL')?100-b.bull_pct:b.bull_pct):0;
   $('convBar').style.width=(conv||0)+'%';

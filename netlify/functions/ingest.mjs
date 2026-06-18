@@ -1,49 +1,99 @@
 import { getStore } from "@netlify/blobs";
 
-const FEED_MAX = 200;
+const HIST_MAX = 300;
+const ACT_MAX = 40;
 
 const EMPTY = () => ({
-  last_seen: 0, last_ts: null, session: null,
-  bias: {}, gate: {}, h1: {}, m15: {}, m5: {}, last_trade: {},
-  stats: { trades: 0, executed: 0, failed: 0 },
-  feed: [], seq: 0,
+  last_seen: 0,
+  engine_started: null,
+  bias: {},                 // {label, date}
+  status: {},               // {stage, session, trades_today, max_trades, ts}
+  pipeline: {},             // {h4, h1:{state,score,rr}, m15}
+  open_trade: null,         // live trade being tracked
+  trades: [],               // closed trade history
+  stats: { total: 0, wins: 0, losses: 0 },
+  activity: [],             // human-readable client-facing events
+  tradeSeq: 0,
+  seq: 0,
 });
 
+function act(s, level, text, ts) {
+  s.activity.push({ level, text, ts: ts || null, recv: Date.now() });
+  if (s.activity.length > ACT_MAX) s.activity = s.activity.slice(-ACT_MAX);
+}
+
 function apply(s, ev) {
-  const t = ev.type, d = ev.data || {};
+  const k = ev.kind;
   s.last_seen = Date.now();
-  if (ev.ts) s.last_ts = ev.ts;
-  if (ev.session) s.session = ev.session;
 
-  if (t === "bias" || t === "bias_detail") s.bias = { ...s.bias, ...d };
-  else if (t === "bias_head") s.bias = { ...s.bias, label: d.label };
-  else if (t === "gate") s.gate = d;
-  else if (["h1_engage", "h1_latch", "h1_levels", "h1_risk"].includes(t)) {
-    const c = { ...s.h1 };
-    for (const k in d) if (d[k] !== null && d[k] !== undefined) c[k] = d[k];
-    s.h1 = c;
+  if (k === "bias") {
+    s.bias = { label: ev.label, date: ev.date || s.bias.date || null };
+    if (ev.label && ev.label !== "NO_TRADE_DAY")
+      act(s, "info", `Daily bias: ${String(ev.label).replace(/_/g, " ")}`, ev.ts);
   }
-  else if (t === "m15") s.m15 = d;
-  else if (t === "m5_exec") s.m5 = d;
-  else if (t === "newday") {
-    s.stats = { trades: 0, executed: 0, failed: 0 };
-    s.gate = {}; s.h1 = {}; s.m15 = {}; s.m5 = {}; s.last_trade = {};
+  else if (k === "status") {
+    s.status = {
+      stage: ev.stage,
+      session: ev.session ?? s.status.session ?? null,
+      trades_today: ev.trades_today ?? s.status.trades_today ?? 0,
+      max_trades: ev.max_trades ?? s.status.max_trades ?? null,
+      ts: ev.ts || null,
+    };
+    if (ev.stage === "starting") s.engine_started = Date.now();
   }
-  else if (t === "trade") { s.last_trade = d; s.stats.trades++; }
-  else if (t === "order_ok") s.stats.executed++;
-  else if (t === "order_fail") s.stats.failed++;
-
-  s.seq++;
-  ev.seq = s.seq;
-  ev.recv = Date.now();
-  s.feed.push(ev);
-  if (s.feed.length > FEED_MAX) s.feed = s.feed.slice(-FEED_MAX);
+  else if (k === "pipeline") {
+    s.pipeline = { h4: ev.h4 ?? null, h1: ev.h1 ?? null, m15: ev.m15 ?? null };
+  }
+  else if (k === "open") {
+    s.tradeSeq += 1;
+    s.open_trade = {
+      id: s.tradeSeq,
+      dir: ev.dir, entry: ev.entry, sl: ev.sl, tp: ev.tp,
+      rr: ev.rr, risk: ev.risk, reward: ev.reward,
+      opened_ts: ev.ts || null, opened_date: ev.date || s.bias.date || null,
+      price: ev.entry, price_ts: ev.ts || null, updated: Date.now(),
+    };
+    if (s.status) s.status.stage = "in_trade";
+    act(s, "open", `Trade opened — ${ev.dir} @ ${ev.entry}`, ev.ts);
+  }
+  else if (k === "price") {
+    if (s.open_trade) {
+      s.open_trade.price = ev.price;
+      s.open_trade.price_ts = ev.ts || null;
+      s.open_trade.updated = Date.now();
+    }
+  }
+  else if (k === "close") {
+    if (s.open_trade) {
+      const t = s.open_trade;
+      const isSell = String(t.dir || "").toUpperCase().startsWith("S");
+      const pnl = isSell ? (t.entry - ev.exit) : (ev.exit - t.entry);
+      const result = ev.outcome === "TP" ? "WIN" : (ev.outcome === "SL" ? "LOSS" : (pnl >= 0 ? "WIN" : "LOSS"));
+      const rec = {
+        ...t,
+        closed_ts: ev.ts || null,
+        outcome: ev.outcome,           // "TP" | "SL" | "MANUAL"
+        exit: ev.exit,
+        pnl_points: Math.round(pnl * 100) / 100,
+        result,
+      };
+      s.trades.push(rec);
+      if (s.trades.length > HIST_MAX) s.trades = s.trades.slice(-HIST_MAX);
+      s.stats.total += 1;
+      if (result === "WIN") s.stats.wins += 1; else s.stats.losses += 1;
+      s.open_trade = null;
+      if (s.status) s.status.stage = "scanning";
+      const sign = rec.pnl_points >= 0 ? "+" : "";
+      act(s, result === "WIN" ? "win" : "loss",
+        `${ev.outcome} hit — ${t.dir} closed @ ${ev.exit} (${sign}${rec.pnl_points} pts)`, ev.ts);
+    }
+  }
+  s.seq += 1;
 }
 
 export default async (req) => {
   if (req.method !== "POST")
     return new Response(JSON.stringify({ error: "method" }), { status: 405 });
-
   if (req.headers.get("x-token") !== process.env.INGEST_TOKEN)
     return new Response(JSON.stringify({ error: "bad token" }),
       { status: 401, headers: { "content-type": "application/json" } });
@@ -56,9 +106,10 @@ export default async (req) => {
   const store = getStore("tfe");
   let s = await store.get("state", { type: "json" });
   if (!s) s = EMPTY();
+  // make sure older stored states gain new fields
+  s = { ...EMPTY(), ...s, stats: { ...EMPTY().stats, ...(s.stats || {}) } };
 
-  for (const ev of events)
-    if (ev && typeof ev === "object") apply(s, ev);
+  for (const ev of events) if (ev && typeof ev === "object" && ev.kind) apply(s, ev);
 
   await store.setJSON("state", s);
   return new Response(JSON.stringify({ ok: true, count: events.length, seq: s.seq }),

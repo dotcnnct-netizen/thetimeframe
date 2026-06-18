@@ -22,6 +22,17 @@ function act(s, level, text, ts) {
   if (s.activity.length > ACT_MAX) s.activity = s.activity.slice(-ACT_MAX);
 }
 
+function openFrom(s, f) {
+  s.tradeSeq += 1;
+  return {
+    id: s.tradeSeq,
+    dir: f.dir, entry: f.entry, sl: f.sl, tp: f.tp,
+    rr: f.rr, risk: f.risk, reward: f.reward,
+    opened_ts: f.ts || null, opened_date: f.date || s.bias.date || null,
+    price: f.entry, price_ts: f.ts || null, updated: Date.now(),
+  };
+}
+
 function apply(s, ev) {
   const k = ev.kind;
   s.last_seen = Date.now();
@@ -45,22 +56,29 @@ function apply(s, ev) {
     s.pipeline = { h4: ev.h4 ?? null, h1: ev.h1 ?? null, m15: ev.m15 ?? null };
   }
   else if (k === "open") {
-    s.tradeSeq += 1;
-    s.open_trade = {
-      id: s.tradeSeq,
-      dir: ev.dir, entry: ev.entry, sl: ev.sl, tp: ev.tp,
-      rr: ev.rr, risk: ev.risk, reward: ev.reward,
-      opened_ts: ev.ts || null, opened_date: ev.date || s.bias.date || null,
-      price: ev.entry, price_ts: ev.ts || null, updated: Date.now(),
-    };
+    s.open_trade = openFrom(s, ev);
     if (s.status) s.status.stage = "in_trade";
     act(s, "open", `Trade opened — ${ev.dir} @ ${ev.entry}`, ev.ts);
   }
   else if (k === "price") {
+    // self-heal: if the 'open' event was lost, rebuild the trade from the price payload
+    if (!s.open_trade && ev.trade) {
+      s.open_trade = openFrom(s, ev.trade);
+      if (s.status) s.status.stage = "in_trade";
+      act(s, "open", `Trade opened — ${ev.trade.dir} @ ${ev.trade.entry}`, ev.trade.ts);
+    }
     if (s.open_trade) {
       s.open_trade.price = ev.price;
       s.open_trade.price_ts = ev.ts || null;
       s.open_trade.updated = Date.now();
+    }
+  }
+  else if (k === "update") {
+    if (s.open_trade) {
+      if (ev.sl != null) s.open_trade.sl = ev.sl;
+      if (ev.tp != null) s.open_trade.tp = ev.tp;
+      s.open_trade.updated = Date.now();
+      if (ev.sl != null) act(s, "info", `SL trailed to ${ev.sl}`, ev.ts);
     }
   }
   else if (k === "close") {
@@ -68,19 +86,22 @@ function apply(s, ev) {
       const t = s.open_trade;
       const isSell = String(t.dir || "").toUpperCase().startsWith("S");
       const pnl = isSell ? (t.entry - ev.exit) : (ev.exit - t.entry);
-      const result = ev.outcome === "TP" ? "WIN" : (ev.outcome === "SL" ? "LOSS" : (pnl >= 0 ? "WIN" : "LOSS"));
+      const pnlR = Math.round(pnl * 100) / 100;
+      // win/loss reflects real P/L — a stop trailed into profit still counts as a win
+      const result = pnlR > 0 ? "WIN" : (pnlR < 0 ? "LOSS" : "BE");
       const rec = {
         ...t,
         closed_ts: ev.ts || null,
         outcome: ev.outcome,           // "TP" | "SL" | "MANUAL"
         exit: ev.exit,
-        pnl_points: Math.round(pnl * 100) / 100,
+        pnl_points: pnlR,
         result,
       };
       s.trades.push(rec);
       if (s.trades.length > HIST_MAX) s.trades = s.trades.slice(-HIST_MAX);
       s.stats.total += 1;
-      if (result === "WIN") s.stats.wins += 1; else s.stats.losses += 1;
+      if (result === "WIN") s.stats.wins += 1;
+      else if (result === "LOSS") s.stats.losses += 1;
       s.open_trade = null;
       if (s.status) s.status.stage = "scanning";
       const sign = rec.pnl_points >= 0 ? "+" : "";

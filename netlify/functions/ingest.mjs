@@ -14,6 +14,7 @@ const EMPTY = () => ({
   stats: { total: 0, wins: 0, losses: 0 },
   activity: [],             // human-readable client-facing events
   tradeSeq: 0,
+  lastClosedTid: 0,         // highest closed trade id — blocks self-heal from resurrecting it
   seq: 0,
 });
 
@@ -26,6 +27,7 @@ function openFrom(s, f) {
   s.tradeSeq += 1;
   return {
     id: s.tradeSeq,
+    tid: f.tid || 0,
     dir: f.dir, entry: f.entry, sl: f.sl, tp: f.tp,
     rr: f.rr, risk: f.risk, reward: f.reward,
     opened_ts: f.ts || null, opened_date: f.date || s.bias.date || null,
@@ -36,6 +38,7 @@ function openFrom(s, f) {
 function apply(s, ev) {
   const k = ev.kind;
   s.last_seen = Date.now();
+  if (s.lastClosedTid == null) s.lastClosedTid = 0;
 
   if (k === "bias") {
     s.bias = { label: ev.label, date: ev.date || s.bias.date || null };
@@ -51,6 +54,13 @@ function apply(s, ev) {
       ts: ev.ts || null,
     };
     if (ev.stage === "starting") s.engine_started = Date.now();
+    // Safety net: any non-trading state means the engine isn't tracking a trade.
+    // Clear a stale trade (e.g. left over after Ctrl+C / restart) and block resurrection.
+    if (ev.stage && ev.stage !== "in_trade" && s.open_trade) {
+      s.lastClosedTid = Math.max(s.lastClosedTid || 0, s.open_trade.tid || 0);
+      act(s, "info", `Live trade cleared (engine ${ev.stage})`, ev.ts);
+      s.open_trade = null;
+    }
   }
   else if (k === "pipeline") {
     s.pipeline = { h4: ev.h4 ?? null, h1: ev.h1 ?? null, m15: ev.m15 ?? null };
@@ -61,8 +71,9 @@ function apply(s, ev) {
     act(s, "open", `Trade opened — ${ev.dir} @ ${ev.entry}`, ev.ts);
   }
   else if (k === "price") {
-    // self-heal: if the 'open' event was lost, rebuild the trade from the price payload
-    if (!s.open_trade && ev.trade) {
+    // self-heal: rebuild the trade if 'open' was lost — but never resurrect a trade
+    // whose id has already been closed (prevents a late price re-creating a phantom).
+    if (!s.open_trade && ev.trade && (ev.trade.tid || 0) > (s.lastClosedTid || 0)) {
       s.open_trade = openFrom(s, ev.trade);
       if (s.status) s.status.stage = "in_trade";
       act(s, "open", `Trade opened — ${ev.trade.dir} @ ${ev.trade.entry}`, ev.trade.ts);
@@ -102,6 +113,7 @@ function apply(s, ev) {
       s.stats.total += 1;
       if (result === "WIN") s.stats.wins += 1;
       else if (result === "LOSS") s.stats.losses += 1;
+      s.lastClosedTid = Math.max(s.lastClosedTid || 0, t.tid || ev.tid || 0);
       s.open_trade = null;
       if (s.status) s.status.stage = "scanning";
       const sign = rec.pnl_points >= 0 ? "+" : "";
